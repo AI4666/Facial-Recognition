@@ -1,0 +1,7 @@
+{
+  "name": "Skyy Facial Recognition",
+  "description": "A robust facial recognition system featuring registration, identification, and event orchestration using Gemini 2.5 Flash for vision analysis.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
