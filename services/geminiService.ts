@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { DetectionResult, RecognitionResult, User } from '../types';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
 // Model specifically chosen for speed and vision capabilities
 const MODEL_NAME = 'gemini-2.5-flash';
@@ -82,16 +82,16 @@ export const geminiService = {
    */
   recognizeUser: async (base64Image: string, knownUsers: User[]): Promise<RecognitionResult> => {
     try {
-       const cleanBase64 = base64Image.replace(/^data:image\/(png|jpeg|jpg);base64,/, '');
-       
-       if (knownUsers.length === 0) {
-         return { matchFound: false, error: "No users in database." , confidence: 0};
-       }
+      const cleanBase64 = base64Image.replace(/^data:image\/(png|jpeg|jpg);base64,/, '');
 
-       // Construct a prompt with the known users' "embeddings" (descriptions)
-       const userProfiles = knownUsers.map(u => `ID: ${u.id}, Name: ${u.name}, Description: ${u.faceDescription}`).join('\n');
+      if (knownUsers.length === 0) {
+        return { matchFound: false, error: "No users in database.", confidence: 0 };
+      }
 
-       const response = await ai.models.generateContent({
+      // Construct a prompt with the known users' "embeddings" (descriptions)
+      const userProfiles = knownUsers.map(u => `ID: ${u.id}, Name: ${u.name}, Description: ${u.faceDescription}`).join('\n');
+
+      const response = await ai.models.generateContent({
         model: MODEL_NAME,
         contents: {
           parts: [

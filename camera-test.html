@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Camera Test</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      background: #000;
+      color: #fff;
+      font-family: monospace;
+    }
+    video {
+      width: 100%;
+      max-width: 640px;
+      border: 2px solid #0f0;
+      display: block;
+      margin: 20px auto;
+    }
+    .info {
+      text-align: center;
+      margin: 20px;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      margin: 10px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1 style="text-align: center;">Camera Integration Test</h1>
+  
+  <div class="info">
+    <button onclick="startCamera()">Start Camera</button>
+    <button onclick="captureFrame()">Capture Frame</button>
+    <div id="status">Click "Start Camera" to begin</div>
+  </div>
+  
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas" style="display: none;"></canvas>
+  <img id="snapshot" style="display: block; margin: 20px auto; max-width: 640px; border: 2px solid #00f;">
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const snapshot = document.getElementById('snapshot');
+    const status = document.getElementById('status');
+    let stream = null;
+
+    async function startCamera() {
+      try {
+        status.textContent = 'Requesting camera access...';
+        
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'user',
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+        
+        video.srcObject = stream;
+        await video.play();
+        
+        status.innerHTML = `
+          ✅ Camera Active!<br>
+          Resolution: ${video.videoWidth} x ${video.videoHeight}<br>
+          Stream ID: ${stream.id}<br>
+          Tracks: ${stream.getVideoTracks().length}
+        `;
+        
+        console.log('Camera started successfully:', {
+          videoWidth: video.videoWidth,
+          videoHeight: video.videoHeight,
+          stream: stream,
+          tracks: stream.getVideoTracks()
+        });
+        
+      } catch (err) {
+        status.innerHTML = `❌ Error: ${err.name}<br>${err.message}`;
+        console.error('Camera error:', err);
+      }
+    }
+
+    function captureFrame() {
+      if (!stream) {
+        alert('Start camera first!');
+        return;
+      }
+      
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0);
+      
+      const imageData = canvas.toDataURL('image/jpeg');
+      snapshot.src = imageData;
+      snapshot.style.display = 'block';
+      
+      console.log('Frame captured:', imageData.substring(0, 100) + '...');
+    }
+
+    // Auto-start camera on load
+    window.addEventListener('load', () => {
+      setTimeout(startCamera, 500);
+    });
+  </script>
+</body>
+</html>
