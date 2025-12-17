@@ -1,5 +1,7 @@
 import { VoiceCommand } from '../types';
 
+const WAKE_WORD = 'hello gemma';
+
 export const voiceService = {
     /**
      * Check if browser supports speech recognition
@@ -18,13 +20,13 @@ export const voiceService = {
     /**
      * Create a speech recognition instance
      */
-    createRecognition: (): any => {
+    createRecognition: (continuous: boolean = false): any => {
         const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
         if (!SpeechRecognition) return null;
 
         const recognition = new SpeechRecognition();
-        recognition.continuous = false;
-        recognition.interimResults = false;
+        recognition.continuous = continuous;
+        recognition.interimResults = continuous; // Show interim results for wake word
         recognition.lang = 'en-US';
         recognition.maxAlternatives = 1;
 
@@ -64,6 +66,72 @@ export const voiceService = {
                 reject(new Error('Listening timeout'));
             }, 10000);
         });
+    },
+
+    /**
+     * Start continuous listening for wake word "Hello Gemma"
+     * Returns a recognition instance that can be stopped
+     */
+    startWakeWordListening: (onWakeWord: () => void, onError?: (error: Error) => void): any => {
+        if (!voiceService.isSupported()) {
+            onError?.(new Error('Speech recognition not supported'));
+            return null;
+        }
+
+        const recognition = voiceService.createRecognition(true);
+        if (!recognition) {
+            onError?.(new Error('Failed to create recognition instance'));
+            return null;
+        }
+
+        recognition.onresult = (event: any) => {
+            // Check all results for wake word
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript.toLowerCase().trim();
+
+                // Check if wake word is detected
+                if (transcript.includes(WAKE_WORD) ||
+                    transcript.includes('hello jemma') ||
+                    transcript.includes('hey gemma')) {
+                    console.log('Wake word detected:', transcript);
+                    onWakeWord();
+                    // Don't stop - keep listening for next wake word
+                }
+            }
+        };
+
+        recognition.onerror = (event: any) => {
+            console.error('Wake word error:', event.error);
+            if (event.error !== 'no-speech' && event.error !== 'aborted') {
+                onError?.(new Error(event.error));
+            }
+        };
+
+        // Auto-restart when recognition ends (for continuous listening)
+        recognition.onend = () => {
+            // Restart unless explicitly stopped
+            try {
+                recognition.start();
+            } catch (e) {
+                // Already started or stopped
+            }
+        };
+
+        recognition.start();
+        console.log('Wake word listening started. Say "Hello Gemma" to activate.');
+
+        return recognition;
+    },
+
+    /**
+     * Stop wake word listening
+     */
+    stopWakeWordListening: (recognition: any): void => {
+        if (recognition) {
+            recognition.onend = null; // Prevent auto-restart
+            recognition.stop();
+            console.log('Wake word listening stopped');
+        }
     },
 
     /**
@@ -108,8 +176,14 @@ export const voiceService = {
         let command = 'unknown';
         let executed = false;
 
+        // Check for wake word first
+        if (lowerTranscript.includes(WAKE_WORD) ||
+            lowerTranscript.includes('hello jemma') ||
+            lowerTranscript.includes('hey gemma')) {
+            command = 'wake_word';
+        }
         // Command patterns (check specific commands first)
-        if (lowerTranscript.includes('register') || lowerTranscript.includes('new user')) {
+        else if (lowerTranscript.includes('register') || lowerTranscript.includes('new user')) {
             command = 'register_user';
         } else if (lowerTranscript.includes('capture') || lowerTranscript.includes('take photo')) {
             command = 'capture_image';
@@ -119,6 +193,10 @@ export const voiceService = {
             command = 'stop_recognition';
         } else if (lowerTranscript.includes('settings') || lowerTranscript.includes('preferences')) {
             command = 'open_settings';
+        } else if (lowerTranscript.includes('yes') || lowerTranscript.includes('confirm')) {
+            command = 'confirm';
+        } else if (lowerTranscript.includes('no') || lowerTranscript.includes('cancel')) {
+            command = 'cancel';
         } else {
             command = 'chat'; // Default to chat message
         }
@@ -130,5 +208,12 @@ export const voiceService = {
             timestamp: new Date().toISOString(),
             executed
         };
+    },
+
+    /**
+     * Get the wake word phrase
+     */
+    getWakeWord: (): string => {
+        return WAKE_WORD;
     }
 };

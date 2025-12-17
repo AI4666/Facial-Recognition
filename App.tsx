@@ -8,7 +8,7 @@ import LogViewer from './components/LogViewer';
 import CameraSelector from './components/CameraSelector';
 import ChatInterface from './components/ChatInterface';
 import EmotionIndicator from './components/EmotionIndicator';
-import VoiceCommandPanel from './components/VoiceCommandPanel';
+import VoiceAssistant from './components/VoiceAssistant';
 import SecurityIndicator from './components/SecurityIndicator';
 import SettingsPanel from './components/SettingsPanel';
 import OfflineModePanel from './components/OfflineModePanel';
@@ -44,6 +44,7 @@ const App: React.FC = () => {
   const [lastGreeting, setLastGreeting] = useState<string | null>(null);
   const [matchedUser, setMatchedUser] = useState<User | null>(null);
   const [detectedBox, setDetectedBox] = useState<BoundingBox | null>(null);
+  const [showGreetingOverlay, setShowGreetingOverlay] = useState(false);
 
   // === Advanced Features State ===
   const [currentEmotion, setCurrentEmotion] = useState<Emotion | null>(null);
@@ -211,10 +212,15 @@ const App: React.FC = () => {
                 }
               }
 
+              // Show greeting overlay and auto-dismiss after 4 seconds
+              setShowGreetingOverlay(true);
               setTimeout(() => {
-                setRecognitionStatus('SCANNING');
-                // Don't clear matchedUser so chat remains active
-              }, 3000);
+                setShowGreetingOverlay(false);
+              }, 4000);
+
+              // Stop scanning after successful match
+              stopRecognitionLoop();
+              addLog('INFO', 'Recognition Paused', 'User matched - scanning stopped');
             }
           } else {
             setRecognitionStatus('SCANNING');
@@ -396,7 +402,7 @@ const App: React.FC = () => {
             <Icons.Face />
           </div>
           <h1 className="text-xl font-bold tracking-wider text-white">
-            SKYY <span className="text-sky-500 text-sm font-normal">AI RECOGNITION v2.0</span>
+            ADVANCE <span className="text-sky-500 text-sm font-normal">AI RECOGNITION V2.0</span>
           </h1>
         </div>
         <nav className="flex gap-4 items-center">
@@ -431,10 +437,85 @@ const App: React.FC = () => {
         </nav>
       </header>
 
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+      {/* Main Content - 3 Column Layout */}
+      <main className="flex-1 flex flex-col xl:flex-row overflow-hidden">
 
-        {/* Left Panel: Camera & Visual Interface */}
+        {/* LEFT PANEL: System Status, Voice Commands, Security */}
+        <div className="w-full xl:w-80 bg-slate-950 border-r border-slate-800 flex flex-col shrink-0 overflow-y-auto">
+          <div className="p-4 flex flex-col gap-4">
+
+            {/* System Status */}
+            <div className="bg-slate-900 p-4 rounded-lg border border-slate-800">
+              <h3 className="text-slate-500 text-xs uppercase tracking-widest font-bold mb-3">System Status</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-2xl font-bold text-white">{users.length}</div>
+                  <div className="text-xs text-slate-500">Registered Users</div>
+                </div>
+                <div>
+                  <div className={`text-2xl font-bold ${appState === AppState.RECOGNITION ? 'text-green-400' : 'text-yellow-400'}`}>
+                    {appState === AppState.RECOGNITION ? 'ACTIVE' : 'PAUSED'}
+                  </div>
+                  <div className="text-xs text-slate-500">Service State</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Advanced Features Panel */}
+            {showAdvancedPanel && (
+              <>
+                {/* Offline Mode Panel */}
+                <OfflineModePanel />
+
+                {/* Emotion Indicator */}
+                {currentEmotion && (
+                  <EmotionIndicator emotion={currentEmotion} />
+                )}
+
+                {/* Voice Assistant - "Hello Gemma" wake word */}
+                <VoiceAssistant
+                  onCaptureRequest={async () => cameraRef.current?.capture() || null}
+                  onRecognizeRequest={async (image) => {
+                    const result = await geminiService.recognizeUser(image, users);
+                    if (result.matchFound && result.userId) {
+                      const user = storageService.getUserById(result.userId);
+                      if (user) {
+                        setMatchedUser(user);
+                        setRecognitionStatus('MATCHED');
+                        setLastGreeting(result.greeting || `Welcome back, ${user.name}`);
+                        const history = conversationService.getConversationHistory(user.id);
+                        setConversationMessages(history);
+                      }
+                    }
+                    return result;
+                  }}
+                  onRegisterRequest={() => startRegistration()}
+                  onSpeakResponse={async (text) => {
+                    if (voiceService.isTTSSupported()) {
+                      await voiceService.speak(text);
+                    }
+                  }}
+                />
+
+                {/* Security Indicator */}
+                {securityCheck && (
+                  <SecurityIndicator securityCheck={securityCheck} />
+                )}
+
+                {/* Security Check Button */}
+                <button
+                  onClick={performSecurityCheck}
+                  className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded text-sm font-medium transition-colors border border-slate-700"
+                >
+                  Run Security Check
+                </button>
+              </>
+            )}
+
+          </div>
+        </div>
+
+        {/* CENTER PANEL: Camera & Visual Interface */}
         <div className="flex-1 p-6 flex flex-col gap-6 overflow-y-auto relative">
 
           {/* Camera Container */}
@@ -456,8 +537,8 @@ const App: React.FC = () => {
               }
             />
 
-            {/* Greeting Overlay */}
-            {appState === AppState.RECOGNITION && recognitionStatus === 'MATCHED' && (
+            {/* Greeting Overlay - auto-dismisses after 4 seconds */}
+            {showGreetingOverlay && matchedUser && (
               <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-slate-900/90 border border-sky-500/50 p-6 rounded-xl backdrop-blur-md shadow-2xl text-center animate-fadeIn">
                 <div className="w-16 h-16 bg-green-500/20 text-green-400 rounded-full flex items-center justify-center mx-auto mb-3 border border-green-500/50">
                   <Icons.Check />
@@ -555,77 +636,10 @@ const App: React.FC = () => {
 
         </div>
 
-        {/* Right Panel: Info & Advanced Features */}
-        <div className="w-full lg:w-96 bg-slate-950 border-l border-slate-800 flex flex-col shrink-0 overflow-y-auto">
-          <div className="flex-1 p-4 flex flex-col gap-4">
-
-            {/* Stats Card */}
-            <div className="bg-slate-900 p-4 rounded-lg border border-slate-800">
-              <h3 className="text-slate-500 text-xs uppercase tracking-widest font-bold mb-3">System Status</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <div className="text-2xl font-bold text-white">{users.length}</div>
-                  <div className="text-xs text-slate-500">Registered Users</div>
-                </div>
-                <div>
-                  <div className={`text-2xl font-bold ${appState === AppState.RECOGNITION ? 'text-green-400' : 'text-yellow-400'}`}>
-                    {appState === AppState.RECOGNITION ? 'ACTIVE' : 'PAUSED'}
-                  </div>
-                  <div className="text-xs text-slate-500">Service State</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Advanced Features Panel (Collapsible) */}
-            {showAdvancedPanel && (
-              <>
-                {/* Offline Mode Panel */}
-                <OfflineModePanel />
-
-                {/* Emotion Indicator */}
-                {currentEmotion && (
-                  <EmotionIndicator emotion={currentEmotion} />
-                )}
-
-                {/* Voice Command Panel */}
-                <VoiceCommandPanel
-                  onCommand={handleVoiceCommand}
-                  isListening={isVoiceListening}
-                  onToggleListening={toggleVoiceListening}
-                  lastCommand={lastVoiceCommand}
-                />
-
-                {/* Security Indicator */}
-                {securityCheck && (
-                  <SecurityIndicator securityCheck={securityCheck} />
-                )}
-
-                {/* Security Check Button */}
-                <button
-                  onClick={performSecurityCheck}
-                  className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded text-sm font-medium transition-colors border border-slate-700"
-                >
-                  Run Security Check
-                </button>
-              </>
-            )}
-
-            {/* Log Viewer */}
+        {/* RIGHT PANEL: System Logs */}
+        <div className="w-full xl:w-96 bg-slate-950 border-l border-slate-800 flex flex-col shrink-0 overflow-hidden">
+          <div className="p-4 h-full flex flex-col">
             <LogViewer logs={logs} />
-
-            {/* MCP Interface */}
-            <div className="bg-slate-900 p-4 rounded-lg border border-slate-800 mt-auto">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                <h3 className="text-slate-500 text-xs uppercase tracking-widest font-bold">AI Status</h3>
-              </div>
-              <div className="font-mono text-xs text-emerald-600/80 bg-black/50 p-2 rounded border border-emerald-900/30 overflow-hidden">
-                &gt; Gemini Model: gemini-2.5-flash<br />
-                &gt; Advanced Features: {showAdvancedPanel ? 'Active' : 'Standby'}<br />
-                {logs.length > 0 && `> Last Event: ${logs[logs.length - 1].type}`}
-              </div>
-            </div>
-
           </div>
         </div>
 
@@ -655,7 +669,7 @@ const App: React.FC = () => {
           to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
-    </div>
+    </div >
   );
 };
 

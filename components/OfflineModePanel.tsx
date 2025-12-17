@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { localLLMService } from '../services/localLLMService';
 import { conversationService } from '../services/conversationService';
+import { ollamaService } from '../services/ollamaService';
 
 interface OfflineModePanelProps {
     onOfflineModeChange?: (enabled: boolean) => void;
@@ -8,11 +9,33 @@ interface OfflineModePanelProps {
 
 const OfflineModePanel: React.FC<OfflineModePanelProps> = ({ onOfflineModeChange }) => {
     const [offlineMode, setOfflineMode] = useState(conversationService.isOfflineMode());
-    const [isOnlineAvailable, setIsOnlineAvailable] = useState<boolean | null>(null); // null = not checked yet
+    const [isOnlineAvailable, setIsOnlineAvailable] = useState<boolean | null>(null);
     const [isModelLoading, setIsModelLoading] = useState(false);
     const [modelStatus, setModelStatus] = useState<'not_loaded' | 'loading' | 'ready' | 'error'>('not_loaded');
+    const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
+    const [activeModel, setActiveModel] = useState<'ollama' | 'gpt2' | 'none'>('none');
 
     useEffect(() => {
+        // Check Ollama connection status
+        const checkOllama = async () => {
+            try {
+                const connected = await ollamaService.checkConnection();
+                setOllamaStatus(connected ? 'connected' : 'disconnected');
+
+                if (connected) {
+                    const hasModel = await ollamaService.isModelAvailable();
+                    if (hasModel) {
+                        setActiveModel('ollama');
+                        setModelStatus('ready');
+                    }
+                }
+            } catch {
+                setOllamaStatus('disconnected');
+            }
+        };
+
+        checkOllama();
+
         // Check if local model is ready
         if (localLLMService.isReady()) {
             setModelStatus('ready');
@@ -26,13 +49,23 @@ const OfflineModePanel: React.FC<OfflineModePanelProps> = ({ onOfflineModeChange
 
     const handleToggleOfflineMode = async (enabled: boolean) => {
         if (enabled && modelStatus === 'not_loaded') {
-            // Preload the model
             setIsModelLoading(true);
             setModelStatus('loading');
 
             try {
-                await localLLMService.initTextGenerationModel();
-                setModelStatus('ready');
+                // Check Ollama first
+                const ollamaUp = await ollamaService.checkConnection();
+                if (ollamaUp) {
+                    setOllamaStatus('connected');
+                    setActiveModel('ollama');
+                    setModelStatus('ready');
+                } else {
+                    // Fallback to GPT-2
+                    await localLLMService.initTextGenerationModel();
+                    setActiveModel('gpt2');
+                    setModelStatus('ready');
+                }
+
                 setOfflineMode(true);
                 conversationService.setOfflineMode(true);
                 onOfflineModeChange?.(true);
@@ -49,6 +82,22 @@ const OfflineModePanel: React.FC<OfflineModePanelProps> = ({ onOfflineModeChange
         }
     };
 
+    const handleRetryOllama = async () => {
+        setOllamaStatus('checking');
+        localLLMService.resetOllamaStatus();
+
+        try {
+            const connected = await ollamaService.checkConnection();
+            setOllamaStatus(connected ? 'connected' : 'disconnected');
+            if (connected) {
+                setActiveModel('ollama');
+                setModelStatus('ready');
+            }
+        } catch {
+            setOllamaStatus('disconnected');
+        }
+    };
+
     const getStatusColor = () => {
         if (offlineMode) return 'text-orange-400 bg-orange-400/20 border-orange-500/50';
         if (isOnlineAvailable === false) return 'text-yellow-400 bg-yellow-400/20 border-yellow-500/50';
@@ -60,6 +109,12 @@ const OfflineModePanel: React.FC<OfflineModePanelProps> = ({ onOfflineModeChange
         if (isOnlineAvailable === false) return 'Online (Unverified)';
         if (isOnlineAvailable === null) return 'Online';
         return 'Online (Verified)';
+    };
+
+    const getModelName = () => {
+        if (activeModel === 'ollama') return 'Gemma 3 (Ollama)';
+        if (activeModel === 'gpt2') return 'GPT-2 (Xenova)';
+        return 'None';
     };
 
     return (
@@ -77,10 +132,41 @@ const OfflineModePanel: React.FC<OfflineModePanelProps> = ({ onOfflineModeChange
             {/* Status Badge */}
             <div className={`inline-flex items-center gap-2 px-3 py-2 rounded-full border mb-4 ${getStatusColor()}`}>
                 <div className={`w-2 h-2 rounded-full ${offlineMode ? 'bg-orange-400' :
-                        isOnlineAvailable === false ? 'bg-yellow-400' :
-                            'bg-green-400'
+                    isOnlineAvailable === false ? 'bg-yellow-400' :
+                        'bg-green-400'
                     } ${!offlineMode && isOnlineAvailable !== false ? 'animate-pulse' : ''}`}></div>
                 <span className="text-sm font-medium">{getStatusText()}</span>
+            </div>
+
+            {/* Ollama Status */}
+            <div className="mb-3 p-3 bg-slate-800 rounded text-xs">
+                <div className="flex items-center justify-between mb-1">
+                    <span className="text-slate-400">Ollama Server:</span>
+                    <div className="flex items-center gap-2">
+                        <span className={
+                            ollamaStatus === 'connected' ? 'text-green-400' :
+                                ollamaStatus === 'checking' ? 'text-yellow-400' :
+                                    'text-red-400'
+                        }>
+                            {ollamaStatus === 'connected' ? '✓ Connected' :
+                                ollamaStatus === 'checking' ? '⏳ Checking...' :
+                                    '✗ Disconnected'}
+                        </span>
+                        {ollamaStatus === 'disconnected' && (
+                            <button
+                                onClick={handleRetryOllama}
+                                className="text-blue-400 hover:text-blue-300 underline"
+                            >
+                                Retry
+                            </button>
+                        )}
+                    </div>
+                </div>
+                {ollamaStatus === 'disconnected' && (
+                    <div className="text-slate-500 mt-1">
+                        Run: <code className="bg-slate-700 px-1 rounded">ollama serve</code>
+                    </div>
+                )}
             </div>
 
             {/* Offline Mode Toggle */}
@@ -127,22 +213,31 @@ const OfflineModePanel: React.FC<OfflineModePanelProps> = ({ onOfflineModeChange
                         )}
                         {modelStatus === 'ready' && (
                             <div className="text-slate-500 mt-1">
-                                Model: GPT-2 (Xenova)
+                                Model: {getModelName()}
+                                {activeModel === 'ollama' && (
+                                    <span className="ml-2 text-green-400">🔥 Vision Enabled</span>
+                                )}
                             </div>
                         )}
                     </div>
                 )}
 
-                {/* Info - Only show if API check explicitly failed AND offline mode is OFF */}
+                {/* Info Messages */}
                 {isOnlineAvailable === false && !offlineMode && (
                     <div className="mt-3 p-3 bg-yellow-900/20 border border-yellow-700/30 rounded text-xs text-yellow-400">
-                        💡 Online API not verified. Chat will use automatic fallback if needed.
+                        💡 Online API not verified. System will auto-fallback to {ollamaStatus === 'connected' ? 'Gemma 3' : 'local model'} if needed.
                     </div>
                 )}
 
-                {offlineMode && (
+                {offlineMode && activeModel === 'ollama' && (
+                    <div className="mt-3 p-3 bg-purple-900/20 border border-purple-700/30 rounded text-xs text-purple-400">
+                        🚀 Gemma 3 active! Full vision + chat capabilities available offline.
+                    </div>
+                )}
+
+                {offlineMode && activeModel === 'gpt2' && (
                     <div className="mt-3 p-3 bg-orange-900/20 border border-orange-700/30 rounded text-xs text-orange-400">
-                        💡 Responses may be shorter and less contextual in offline mode.
+                        💡 Using GPT-2 fallback. For better quality, start Ollama with Gemma 3.
                     </div>
                 )}
             </div>

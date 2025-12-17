@@ -1,15 +1,34 @@
 import { pipeline, env } from '@xenova/transformers';
+import { ollamaService } from './ollamaService';
 
-// Configure transformers.js to use local models
+// Configure transformers.js to use local models (fallback only)
 env.allowLocalModels = true;
 env.allowRemoteModels = true;
 
 let sentimentModel: any = null;
 let textGenerationModel: any = null;
+let ollamaAvailable: boolean | null = null;
 
 export const localLLMService = {
     /**
-     * Initialize sentiment analysis model
+     * Check if Ollama is available (cached result)
+     */
+    checkOllamaStatus: async (): Promise<boolean> => {
+        if (ollamaAvailable === null) {
+            ollamaAvailable = await ollamaService.checkConnection();
+        }
+        return ollamaAvailable;
+    },
+
+    /**
+     * Reset Ollama availability check (for retry)
+     */
+    resetOllamaStatus: (): void => {
+        ollamaAvailable = null;
+    },
+
+    /**
+     * Initialize sentiment analysis model (Transformers.js fallback)
      */
     initSentimentModel: async (): Promise<void> => {
         if (!sentimentModel) {
@@ -25,12 +44,12 @@ export const localLLMService = {
     },
 
     /**
-     * Initialize text generation model (for offline conversations)
+     * Initialize text generation model (Transformers.js fallback)
      */
     initTextGenerationModel: async (): Promise<void> => {
         if (!textGenerationModel) {
             try {
-                console.log('Loading local text generation model...');
+                console.log('Loading local text generation model (GPT-2 fallback)...');
                 textGenerationModel = await pipeline('text-generation', 'Xenova/gpt2');
                 console.log('Text generation model loaded successfully');
             } catch (error) {
@@ -61,10 +80,24 @@ export const localLLMService = {
     },
 
     /**
-     * Generate text response locally (offline capability)
+     * Generate text response locally - tries Ollama first, falls back to GPT-2
      */
     generateTextLocal: async (prompt: string, maxLength: number = 50): Promise<string> => {
+        // Try Ollama (Gemma 3) first
         try {
+            const ollamaUp = await localLLMService.checkOllamaStatus();
+            if (ollamaUp) {
+                console.log('Using Ollama (Gemma 3) for text generation');
+                return await ollamaService.generateText(prompt, maxLength);
+            }
+        } catch (error) {
+            console.warn('Ollama failed, falling back to GPT-2:', error);
+            ollamaAvailable = false;
+        }
+
+        // Fallback to GPT-2
+        try {
+            console.log('Using GPT-2 fallback for text generation');
             if (!textGenerationModel) {
                 await localLLMService.initTextGenerationModel();
             }
@@ -83,7 +116,7 @@ export const localLLMService = {
     },
 
     /**
-     * Generate conversational response with fallback
+     * Generate conversational response with Ollama priority
      */
     generateConversationalResponse: async (
         userMessage: string,
@@ -91,19 +124,40 @@ export const localLLMService = {
         useLocalModel: boolean = false
     ): Promise<string> => {
         if (useLocalModel) {
+            // Try Ollama first
+            try {
+                const ollamaUp = await localLLMService.checkOllamaStatus();
+                if (ollamaUp) {
+                    return await ollamaService.generateConversationalResponse(userMessage, userName);
+                }
+            } catch (error) {
+                console.warn('Ollama conversation failed:', error);
+            }
+
+            // Fallback to GPT-2
             const prompt = `User ${userName} said: "${userMessage}"\nAssistant:`;
-            return await localLLMService.generateTextLocal(prompt, 40);
+            const response = await localLLMService.generateTextLocal(prompt, 40);
+            return response + ' (Offline Mode - GPT-2)';
         } else {
-            // This would call Gemini in the real implementation
             return "Online model would be used here.";
         }
     },
 
     /**
-     * Check if models are loaded
+     * Check if any local models are loaded
      */
     isReady: (): boolean => {
-        return sentimentModel !== null || textGenerationModel !== null;
+        return sentimentModel !== null || textGenerationModel !== null || ollamaAvailable === true;
+    },
+
+    /**
+     * Check which local model is active
+     */
+    getActiveModel: async (): Promise<'ollama' | 'gpt2' | 'none'> => {
+        const ollamaUp = await localLLMService.checkOllamaStatus();
+        if (ollamaUp) return 'ollama';
+        if (textGenerationModel !== null) return 'gpt2';
+        return 'none';
     },
 
     /**

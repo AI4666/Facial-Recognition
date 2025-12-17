@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { DetectionResult, RecognitionResult, User } from '../types';
+import { ollamaService } from './ollamaService';
 
 const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
@@ -9,6 +10,7 @@ const MODEL_NAME = 'gemini-2.5-flash';
 export const geminiService = {
   /**
    * Analyzes an image for registration: checks for face presence, quality, and generates a description.
+   * Falls back to Ollama (Gemma 3) if Gemini fails.
    */
   analyzeRegistrationImage: async (base64Image: string): Promise<DetectionResult> => {
     try {
@@ -67,7 +69,24 @@ export const geminiService = {
       return result;
 
     } catch (error: any) {
-      console.error("Gemini Analysis Error:", error);
+      console.warn("Gemini Analysis Error, trying Ollama fallback:", error.message);
+
+      // Fallback to Ollama (Gemma 3) for offline face detection
+      try {
+        const ollamaUp = await ollamaService.checkConnection();
+        if (ollamaUp) {
+          console.log('Using Ollama (Gemma 3) for face detection');
+          const result = await ollamaService.detectFaceForRegistration(base64Image);
+          // Mark as offline mode
+          if (result.description) {
+            result.description += ' (Offline Mode - Gemma 3)';
+          }
+          return result;
+        }
+      } catch (ollamaError) {
+        console.error("Ollama fallback also failed:", ollamaError);
+      }
+
       return {
         faceDetected: false,
         multipleFaces: false,
@@ -79,6 +98,7 @@ export const geminiService = {
 
   /**
    * Compares current frame against known users.
+   * Falls back to Ollama (Gemma 3) if Gemini fails.
    */
   recognizeUser: async (base64Image: string, knownUsers: User[]): Promise<RecognitionResult> => {
     try {
@@ -145,7 +165,24 @@ export const geminiService = {
       return result;
 
     } catch (error: any) {
-      console.error("Gemini Recognition Error:", error);
+      console.warn("Gemini Recognition Error, trying Ollama fallback:", error.message);
+
+      // Fallback to Ollama (Gemma 3) for offline recognition
+      try {
+        const ollamaUp = await ollamaService.checkConnection();
+        if (ollamaUp) {
+          console.log('Using Ollama (Gemma 3) for face recognition');
+          const result = await ollamaService.recognizeUser(base64Image, knownUsers);
+          // Mark as offline mode
+          if (result.greeting) {
+            result.greeting += ' (Offline Mode)';
+          }
+          return result;
+        }
+      } catch (ollamaError) {
+        console.error("Ollama fallback also failed:", ollamaError);
+      }
+
       return {
         matchFound: false,
         confidence: 0,
