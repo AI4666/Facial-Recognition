@@ -472,7 +472,7 @@ const App: React.FC = () => {
                   <EmotionIndicator emotion={currentEmotion} />
                 )}
 
-                {/* Voice Assistant - "Hello Gemma" wake word */}
+                {/* Voice Assistant - Push-to-Talk */}
                 <VoiceAssistant
                   onCaptureRequest={async () => cameraRef.current?.capture() || null}
                   onRecognizeRequest={async (image) => {
@@ -483,8 +483,11 @@ const App: React.FC = () => {
                         setMatchedUser(user);
                         setRecognitionStatus('MATCHED');
                         setLastGreeting(result.greeting || `Welcome back, ${user.name}`);
+                        setShowGreetingOverlay(true);
+                        setTimeout(() => setShowGreetingOverlay(false), 4000);
                         const history = conversationService.getConversationHistory(user.id);
                         setConversationMessages(history);
+                        stopRecognitionLoop();
                       }
                     }
                     return result;
@@ -493,6 +496,21 @@ const App: React.FC = () => {
                   onSpeakResponse={async (text) => {
                     if (voiceService.isTTSSupported()) {
                       await voiceService.speak(text);
+                    }
+                  }}
+                  onCommand={(cmd) => {
+                    switch (cmd) {
+                      case 'start_recognition':
+                        setAppState(AppState.RECOGNITION);
+                        break;
+                      case 'stop_recognition':
+                        setAppState(AppState.IDLE);
+                        stopRecognitionLoop();
+                        setMatchedUser(null);
+                        break;
+                      case 'open_settings':
+                        setShowSettings(true);
+                        break;
                     }
                   }}
                 />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { voiceService } from '../services/voiceService';
 import { ollamaService } from '../services/ollamaService';
 
@@ -7,198 +7,193 @@ interface VoiceAssistantProps {
     onRecognizeRequest?: (image: string) => Promise<any>;  // Returns recognition result
     onRegisterRequest?: () => void;
     onSpeakResponse?: (text: string) => Promise<void>;
+    onCommand?: (command: string) => void;  // For custom commands
 }
 
-type AssistantState = 'idle' | 'listening' | 'processing' | 'speaking' | 'awaiting_confirm';
+type AssistantState = 'idle' | 'listening' | 'processing' | 'speaking';
 
 const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
     onCaptureRequest,
     onRecognizeRequest,
     onRegisterRequest,
-    onSpeakResponse
+    onSpeakResponse,
+    onCommand
 }) => {
     const [state, setState] = useState<AssistantState>('idle');
-    const [isWakeWordActive, setIsWakeWordActive] = useState(false);
     const [lastTranscript, setLastTranscript] = useState('');
     const [lastResponse, setLastResponse] = useState('');
-    const [pendingAction, setPendingAction] = useState<'register' | null>(null);
-    const recognitionRef = useRef<any>(null);
+    const isListeningRef = useRef(false);
 
-    // Start/stop wake word listening
-    const toggleWakeWordListening = () => {
-        if (isWakeWordActive) {
-            // Stop listening
-            voiceService.stopWakeWordListening(recognitionRef.current);
-            recognitionRef.current = null;
-            setIsWakeWordActive(false);
+    // Push-to-talk: Start listening when button is pressed
+    const startListening = async () => {
+        if (isListeningRef.current || state !== 'idle') return;
+
+        isListeningRef.current = true;
+        setState('listening');
+        setLastTranscript('');
+
+        try {
+            const transcript = await voiceService.startListening();
+            isListeningRef.current = false;
+
+            if (transcript) {
+                setLastTranscript(transcript);
+                await processVoiceInput(transcript);
+            } else {
+                setState('idle');
+            }
+        } catch (error: any) {
+            console.error('Voice input error:', error);
+            isListeningRef.current = false;
             setState('idle');
-        } else {
-            // Start listening for wake word
-            recognitionRef.current = voiceService.startWakeWordListening(
-                handleWakeWord,
-                (error) => console.error('Wake word error:', error)
-            );
-            setIsWakeWordActive(true);
-            setState('listening');
+
+            if (error.message !== 'Listening timeout') {
+                setLastResponse(`Error: ${error.message}`);
+            }
         }
     };
 
-    // Handle wake word detected
-    const handleWakeWord = async () => {
-        console.log('Wake word detected!');
+    // Process voice input and determine action
+    const processVoiceInput = async (transcript: string) => {
         setState('processing');
-        setLastTranscript('Hello Gemma');
+        const command = voiceService.parseCommand(transcript);
 
-        // Stop wake word listening temporarily
-        voiceService.stopWakeWordListening(recognitionRef.current);
+        console.log('Voice command:', command.command, '| Transcript:', transcript);
 
-        // Speak greeting and ask for permission
-        const greeting = "Hi there! Would you like me to take your photo and identify you?";
-        setLastResponse(greeting);
+        try {
+            switch (command.command) {
+                case 'wake_word':
+                    // "Hello Gemma" - respond with greeting
+                    await respond("Hi! I'm listening. What would you like me to do?");
+                    break;
+
+                case 'capture_image':
+                    // "Take photo" / "Capture"
+                    await handlePhotoCapture();
+                    break;
+
+                case 'register_user':
+                    // "Register" / "New user"
+                    onRegisterRequest?.();
+                    await respond("Starting registration process.");
+                    break;
+
+                case 'start_recognition':
+                    // "Start monitoring" / "Start recognition"
+                    onCommand?.('start_recognition');
+                    await respond("Starting face recognition.");
+                    break;
+
+                case 'stop_recognition':
+                    // "Stop" / "Pause"
+                    onCommand?.('stop_recognition');
+                    await respond("Recognition stopped.");
+                    break;
+
+                case 'open_settings':
+                    // "Settings" / "Preferences"
+                    onCommand?.('open_settings');
+                    await respond("Opening settings.");
+                    break;
+
+                case 'confirm':
+                    // "Yes" / "Confirm"
+                    onCommand?.('confirm');
+                    break;
+
+                case 'cancel':
+                    // "No" / "Cancel"
+                    onCommand?.('cancel');
+                    await respond("Cancelled.");
+                    break;
+
+                case 'chat':
+                default:
+                    // Free-form chat - send to Gemma 3
+                    await handleChatMessage(transcript);
+                    break;
+            }
+        } catch (error: any) {
+            console.error('Command processing error:', error);
+            await respond(`Sorry, I encountered an error: ${error.message}`);
+        }
+
+        setState('idle');
+    };
+
+    // Speak response
+    const respond = async (text: string) => {
         setState('speaking');
+        setLastResponse(text);
 
         try {
             if (onSpeakResponse) {
-                await onSpeakResponse(greeting);
-            } else {
-                await voiceService.speak(greeting);
-            }
-
-            // Wait for confirmation
-            setState('awaiting_confirm');
-            const response = await voiceService.startListening();
-            setLastTranscript(response);
-
-            const command = voiceService.parseCommand(response);
-
-            if (command.command === 'confirm') {
-                await handlePhotoCapture();
-            } else if (command.command === 'cancel') {
-                const cancelMsg = "Okay, no problem. Say 'Hello Gemma' when you need me!";
-                setLastResponse(cancelMsg);
-                await voiceService.speak(cancelMsg);
-            } else {
-                // Treat as chat message
-                await handleChatMessage(response);
+                await onSpeakResponse(text);
+            } else if (voiceService.isTTSSupported()) {
+                await voiceService.speak(text);
             }
         } catch (error) {
-            console.error('Voice interaction error:', error);
+            console.error('TTS error:', error);
         }
-
-        // Resume wake word listening
-        setState('listening');
-        recognitionRef.current = voiceService.startWakeWordListening(
-            handleWakeWord,
-            (error) => console.error('Wake word error:', error)
-        );
     };
 
     // Handle photo capture and recognition
     const handlePhotoCapture = async () => {
-        setState('processing');
-        setLastResponse("Taking your photo now...");
-        await voiceService.speak("Taking your photo now...");
+        await respond("Taking your photo...");
 
         try {
-            // Capture image
             const image = onCaptureRequest ? await onCaptureRequest() : null;
 
             if (!image) {
-                const errorMsg = "I couldn't access the camera. Please check permissions.";
-                setLastResponse(errorMsg);
-                await voiceService.speak(errorMsg);
+                await respond("I couldn't access the camera. Please check permissions.");
                 return;
             }
 
-            setLastResponse("Analyzing your face...");
-            await voiceService.speak("Analyzing your face...");
+            setState('processing');
+            setLastResponse("Analyzing...");
 
-            // Try recognition
             const result = onRecognizeRequest ? await onRecognizeRequest(image) : null;
 
             if (result?.matchFound) {
-                // Recognized user
-                const greeting = result.greeting || `Welcome back! I recognized you with ${Math.round(result.confidence * 100)}% confidence.`;
-                setLastResponse(greeting);
-                await voiceService.speak(greeting);
+                const greeting = result.greeting || `Welcome back! Recognized with ${Math.round(result.confidence * 100)}% confidence.`;
+                await respond(greeting);
             } else {
-                // Unknown user - offer registration
-                setPendingAction('register');
-                const unknownMsg = "I don't recognize you. Would you like to register as a new user?";
-                setLastResponse(unknownMsg);
-                setState('awaiting_confirm');
-                await voiceService.speak(unknownMsg);
-
-                // Wait for confirmation
-                const response = await voiceService.startListening();
-                setLastTranscript(response);
-                const command = voiceService.parseCommand(response);
-
-                if (command.command === 'confirm') {
-                    onRegisterRequest?.();
-                    const regMsg = "Great! I'll start the registration process.";
-                    setLastResponse(regMsg);
-                    await voiceService.speak(regMsg);
-                } else {
-                    const cancelMsg = "Okay, maybe next time!";
-                    setLastResponse(cancelMsg);
-                    await voiceService.speak(cancelMsg);
-                }
-                setPendingAction(null);
+                await respond("I don't recognize you. Say 'register' to create a new profile.");
             }
         } catch (error: any) {
-            const errorMsg = "Sorry, I encountered an error. " + (error.message || '');
-            setLastResponse(errorMsg);
-            await voiceService.speak(errorMsg);
+            await respond("Sorry, I encountered an error: " + (error.message || ''));
         }
     };
 
     // Handle chat messages with Gemma 3
     const handleChatMessage = async (message: string) => {
-        setState('processing');
-
         try {
             const response = await ollamaService.generateText(
-                `User says: "${message}"\nRespond helpfully and concisely:`,
+                `User says: "${message}"\nRespond helpfully and concisely (1-2 sentences):`,
                 100
             );
-            setLastResponse(response);
-            await voiceService.speak(response);
+            await respond(response);
         } catch (error) {
-            const errorMsg = "I'm having trouble understanding. Please try again.";
-            setLastResponse(errorMsg);
-            await voiceService.speak(errorMsg);
+            await respond("I'm having trouble connecting to the AI. Please check if Ollama is running.");
         }
     };
 
-    // Cleanup on unmount
-    useEffect(() => {
-        return () => {
-            if (recognitionRef.current) {
-                voiceService.stopWakeWordListening(recognitionRef.current);
-            }
-        };
-    }, []);
-
     const getStateText = () => {
         switch (state) {
-            case 'idle': return 'Click to start';
-            case 'listening': return 'Say "Hello Gemma"...';
-            case 'processing': return 'Processing...';
-            case 'speaking': return 'Speaking...';
-            case 'awaiting_confirm': return 'Waiting for response...';
+            case 'idle': return 'Press and hold to speak';
+            case 'listening': return '🎤 Listening...';
+            case 'processing': return '⏳ Processing...';
+            case 'speaking': return '🔊 Speaking...';
             default: return '';
         }
     };
 
-    const getStateColor = () => {
+    const getButtonStyle = () => {
         switch (state) {
-            case 'idle': return 'bg-slate-700';
-            case 'listening': return 'bg-purple-600 animate-pulse';
+            case 'listening': return 'bg-red-600 scale-105';
             case 'processing': return 'bg-yellow-600';
             case 'speaking': return 'bg-green-600';
-            case 'awaiting_confirm': return 'bg-blue-600 animate-pulse';
-            default: return 'bg-slate-700';
+            default: return 'bg-purple-600 hover:bg-purple-500';
         }
     };
 
@@ -210,26 +205,23 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
                     <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
                     <line x1="12" x2="12" y1="19" y2="22" />
                 </svg>
-                Voice Assistant
+                Voice Assistant (Push-to-Talk)
             </h3>
 
-            {/* Main toggle button */}
+            {/* Push-to-talk button */}
             <button
-                onClick={toggleWakeWordListening}
-                className={`w-full py-4 rounded-lg text-white font-medium transition-all ${getStateColor()} hover:opacity-90`}
+                onMouseDown={startListening}
+                onTouchStart={startListening}
+                disabled={state !== 'idle'}
+                className={`w-full py-6 rounded-lg text-white font-medium transition-all transform ${getButtonStyle()} ${state !== 'idle' ? 'cursor-not-allowed' : 'cursor-pointer active:scale-95'}`}
             >
-                <div className="flex items-center justify-center gap-3">
-                    {isWakeWordActive ? (
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                            <circle cx="12" cy="12" r="4" />
-                        </svg>
-                    ) : (
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                        </svg>
-                    )}
-                    <span>{isWakeWordActive ? '🔴 Listening...' : '🎙️ Start Voice Assistant'}</span>
+                <div className="flex flex-col items-center justify-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                        <line x1="12" x2="12" y1="19" y2="22" />
+                    </svg>
+                    <span className="text-lg">{state === 'listening' ? '🔴 Listening...' : '🎙️ Push to Talk'}</span>
                 </div>
             </button>
 
@@ -256,9 +248,18 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
                 </div>
             )}
 
-            {/* Info */}
-            <div className="mt-4 text-xs text-slate-500">
-                💡 Wake word: <span className="text-purple-400 font-medium">"Hello Gemma"</span>
+            {/* Available commands */}
+            <div className="mt-4 text-xs text-slate-500 space-y-1">
+                <div className="font-medium text-slate-400 mb-2">Available Commands:</div>
+                <div className="grid grid-cols-2 gap-1">
+                    <span>• "Hello Gemma"</span>
+                    <span>• "Take photo"</span>
+                    <span>• "Register"</span>
+                    <span>• "Start monitoring"</span>
+                    <span>• "Stop"</span>
+                    <span>• "Settings"</span>
+                </div>
+                <div className="mt-2 text-slate-600">Or ask any question!</div>
             </div>
         </div>
     );
