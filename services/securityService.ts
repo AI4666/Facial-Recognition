@@ -1,8 +1,11 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import Anthropic from '@anthropic-ai/sdk';
 import { SecurityCheck, LivenessResult } from '../types';
 
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-const MODEL_NAME = 'gemini-2.5-flash';
+const anthropic = new Anthropic({
+    apiKey: import.meta.env.VITE_ANTHROPIC_API_KEY,
+    dangerouslyAllowBrowser: true
+});
+const MODEL_NAME = 'claude-sonnet-4-20250514';
 
 export const securityService = {
     /**
@@ -17,51 +20,65 @@ export const securityService = {
             // Analyze the first and last frame for changes
             const cleanFrames = frames.map(f => f.replace(/^data:image\/(png|jpeg|jpg);base64,/, ''));
 
-            const response = await ai.models.generateContent({
+            const response = await anthropic.messages.create({
                 model: MODEL_NAME,
-                contents: {
-                    parts: [
-                        {
-                            inlineData: {
-                                mimeType: 'image/jpeg',
-                                data: cleanFrames[0]
-                            }
-                        },
-                        {
-                            inlineData: {
-                                mimeType: 'image/jpeg',
-                                data: cleanFrames[cleanFrames.length - 1]
-                            }
-                        },
-                        {
-                            text: `Compare these two images taken moments apart for liveness detection:
+                max_tokens: 512,
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            {
+                                type: 'image',
+                                source: {
+                                    type: 'base64',
+                                    media_type: 'image/jpeg',
+                                    data: cleanFrames[0]
+                                }
+                            },
+                            {
+                                type: 'image',
+                                source: {
+                                    type: 'base64',
+                                    media_type: 'image/jpeg',
+                                    data: cleanFrames[cleanFrames.length - 1]
+                                }
+                            },
+                            {
+                                type: 'text',
+                                text: `Compare these two images taken moments apart for liveness detection:
               
               1. Is there evidence of blinking between frames?
               2. Is there natural micro-movement (head position, eye direction)?
               3. Does the person appear to be a real 3D face (not a photo or screen)?
               4. Rate liveness confidence (0-1)
               
-              Return JSON.`
-                        }
-                    ]
-                },
-                config: {
-                    responseMimeType: 'application/json',
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            blinkDetected: { type: Type.BOOLEAN },
-                            movementDetected: { type: Type.BOOLEAN },
-                            appears3D: { type: Type.BOOLEAN },
-                            livenessScore: { type: Type.NUMBER }
-                        },
-                        required: ['blinkDetected', 'movementDetected', 'appears3D', 'livenessScore']
+              Return ONLY valid JSON with this exact structure:
+              {
+                "blinkDetected": boolean,
+                "movementDetected": boolean,
+                "appears3D": boolean,
+                "livenessScore": number
+              }`
+                            }
+                        ]
                     }
-                }
+                ]
             });
 
-            if (!response.text) throw new Error("No response from AI");
-            const result = JSON.parse(response.text);
+            // Extract the text content from response
+            const textContent = response.content.find(c => c.type === 'text');
+            if (!textContent || textContent.type !== 'text') {
+                throw new Error("No text response from Claude");
+            }
+
+            // Parse JSON from response (handle potential markdown code blocks)
+            let jsonText = textContent.text;
+            const jsonMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (jsonMatch) {
+                jsonText = jsonMatch[1].trim();
+            }
+
+            const result = JSON.parse(jsonText);
 
             const livenessDetected = result.blinkDetected || result.movementDetected;
             const passed = livenessDetected && result.appears3D && result.livenessScore > 0.5;
@@ -109,45 +126,57 @@ export const securityService = {
         try {
             const cleanBase64 = base64Image.replace(/^data:image\/(png|jpeg|jpg);base64,/, '');
 
-            const response = await ai.models.generateContent({
+            const response = await anthropic.messages.create({
                 model: MODEL_NAME,
-                contents: {
-                    parts: [
-                        {
-                            inlineData: {
-                                mimeType: 'image/jpeg',
-                                data: cleanBase64
-                            }
-                        },
-                        {
-                            text: `Analyze this image for anti-spoofing:
+                max_tokens: 512,
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            {
+                                type: 'image',
+                                source: {
+                                    type: 'base64',
+                                    media_type: 'image/jpeg',
+                                    data: cleanBase64
+                                }
+                            },
+                            {
+                                type: 'text',
+                                text: `Analyze this image for anti-spoofing:
               
               1. Is this a printed photo being held up? (look for paper edges, glare)
               2. Is this a screen/monitor being shown? (look for pixelation, screen bezel)
               3. Does the face show natural skin texture and depth?
               4. Rate spoof confidence (0-1, higher = more likely a spoof)
               
-              Return JSON.`
-                        }
-                    ]
-                },
-                config: {
-                    responseMimeType: 'application/json',
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            printDetected: { type: Type.BOOLEAN },
-                            screenDetected: { type: Type.BOOLEAN },
-                            naturalTexture: { type: Type.BOOLEAN },
-                            spoofConfidence: { type: Type.NUMBER }
-                        },
-                        required: ['printDetected', 'screenDetected', 'naturalTexture', 'spoofConfidence']
+              Return ONLY valid JSON with this exact structure:
+              {
+                "printDetected": boolean,
+                "screenDetected": boolean,
+                "naturalTexture": boolean,
+                "spoofConfidence": number
+              }`
+                            }
+                        ]
                     }
-                }
+                ]
             });
 
-            if (!response.text) throw new Error("No response from AI");
-            const result = JSON.parse(response.text);
+            // Extract the text content from response
+            const textContent = response.content.find(c => c.type === 'text');
+            if (!textContent || textContent.type !== 'text') {
+                throw new Error("No text response from Claude");
+            }
+
+            // Parse JSON from response (handle potential markdown code blocks)
+            let jsonText = textContent.text;
+            const jsonMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (jsonMatch) {
+                jsonText = jsonMatch[1].trim();
+            }
+
+            const result = JSON.parse(jsonText);
 
             const spoofDetected = result.printDetected || result.screenDetected || result.spoofConfidence > 0.7;
             const passed = !spoofDetected && result.naturalTexture;

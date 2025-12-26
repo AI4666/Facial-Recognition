@@ -1,8 +1,11 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import Anthropic from '@anthropic-ai/sdk';
 import { Emotion, EmotionAnalysisResult } from '../types';
 
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-const MODEL_NAME = 'gemini-2.5-flash';
+const anthropic = new Anthropic({
+    apiKey: import.meta.env.VITE_ANTHROPIC_API_KEY,
+    dangerouslyAllowBrowser: true
+});
+const MODEL_NAME = 'claude-sonnet-4-20250514';
 
 export const emotionService = {
     /**
@@ -12,18 +15,24 @@ export const emotionService = {
         try {
             const cleanBase64 = base64Image.replace(/^data:image\/(png|jpeg|jpg);base64,/, '');
 
-            const response = await ai.models.generateContent({
+            const response = await anthropic.messages.create({
                 model: MODEL_NAME,
-                contents: {
-                    parts: [
-                        {
-                            inlineData: {
-                                mimeType: 'image/jpeg',
-                                data: cleanBase64
-                            }
-                        },
-                        {
-                            text: `Analyze the facial expression in this image.
+                max_tokens: 256,
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            {
+                                type: 'image',
+                                source: {
+                                    type: 'base64',
+                                    media_type: 'image/jpeg',
+                                    data: cleanBase64
+                                }
+                            },
+                            {
+                                type: 'text',
+                                text: `Analyze the facial expression in this image.
               
               Task:
               1. Detect the primary emotion from: happy, sad, angry, surprised, neutral, fearful, disgusted
@@ -31,34 +40,33 @@ export const emotionService = {
               3. Determine overall sentiment: positive, negative, or neutral
               4. Provide a sentiment score from -1 (very negative) to +1 (very positive)
               
-              Return strictly JSON.`
-                        }
-                    ]
-                },
-                config: {
-                    responseMimeType: 'application/json',
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            primary: {
-                                type: Type.STRING,
-                                description: "One of: happy, sad, angry, surprised, neutral, fearful, disgusted"
-                            },
-                            confidence: { type: Type.NUMBER },
-                            sentiment: {
-                                type: Type.STRING,
-                                description: "One of: positive, negative, neutral"
-                            },
-                            sentimentScore: { type: Type.NUMBER }
-                        },
-                        required: ['primary', 'confidence', 'sentiment', 'sentimentScore']
+              Return ONLY valid JSON with this exact structure:
+              {
+                "primary": "emotion",
+                "confidence": 0.0,
+                "sentiment": "positive|negative|neutral",
+                "sentimentScore": 0.0
+              }`
+                            }
+                        ]
                     }
-                }
+                ]
             });
 
-            if (!response.text) throw new Error("No response from AI");
+            // Extract the text content from response
+            const textContent = response.content.find(c => c.type === 'text');
+            if (!textContent || textContent.type !== 'text') {
+                throw new Error("No text response from Claude");
+            }
 
-            const result = JSON.parse(response.text);
+            // Parse JSON from response (handle potential markdown code blocks)
+            let jsonText = textContent.text;
+            const jsonMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (jsonMatch) {
+                jsonText = jsonMatch[1].trim();
+            }
+
+            const result = JSON.parse(jsonText);
             const emotion: Emotion = {
                 ...result,
                 timestamp: new Date().toISOString()

@@ -1,9 +1,12 @@
-import { GoogleGenAI } from "@google/genai";
+import Anthropic from '@anthropic-ai/sdk';
 import { ConversationMessage, User } from '../types';
 import { localLLMService } from './localLLMService';
 
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-const MODEL_NAME = 'gemini-2.5-flash';
+const anthropic = new Anthropic({
+    apiKey: import.meta.env.VITE_ANTHROPIC_API_KEY,
+    dangerouslyAllowBrowser: true
+});
+const MODEL_NAME = 'claude-sonnet-4-20250514';
 
 const CONVERSATION_STORAGE_KEY = 'skyy_conversations';
 const OFFLINE_MODE_KEY = 'skyy_offline_mode';
@@ -84,15 +87,17 @@ export const conversationService = {
       
       Respond naturally and helpfully. Keep responses concise (2-3 sentences max).`;
 
-            const response = await ai.models.generateContent({
+            const response = await anthropic.messages.create({
                 model: MODEL_NAME,
-                contents: { parts: [{ text: prompt }] }
+                max_tokens: 256,
+                messages: [{ role: 'user', content: prompt }]
             });
 
-            return response.text || "I'm here to help! How can I assist you?";
+            const textContent = response.content.find(c => c.type === 'text');
+            return (textContent && textContent.type === 'text' ? textContent.text : null) || "I'm here to help! How can I assist you?";
 
         } catch (error: any) {
-            console.error("Gemini API Error:", error);
+            console.error("Claude API Error:", error);
             throw error; // Let the caller handle fallback
         }
     },
@@ -211,15 +216,16 @@ export const conversationService = {
     },
 
     /**
-     * Check if online (Gemini) is available
+     * Check if online (Claude) is available
      */
     checkOnlineStatus: async (): Promise<boolean> => {
         try {
-            const response = await ai.models.generateContent({
+            const response = await anthropic.messages.create({
                 model: MODEL_NAME,
-                contents: { parts: [{ text: "ping" }] }
+                max_tokens: 10,
+                messages: [{ role: 'user', content: 'ping' }]
             });
-            return !!response.text;
+            return response.content.length > 0;
         } catch {
             return false;
         }

@@ -13,11 +13,12 @@ import SecurityIndicator from './components/SecurityIndicator';
 import SettingsPanel from './components/SettingsPanel';
 import OfflineModePanel from './components/OfflineModePanel';
 import { storageService } from './services/storageService';
-import { geminiService } from './services/geminiService';
+import { claudeService } from './services/claudeService';
 import { emotionService } from './services/emotionService';
 import { conversationService } from './services/conversationService';
 import { voiceService } from './services/voiceService';
 import { securityService } from './services/securityService';
+import { visionPipeline } from './services/visionPipeline';
 
 // Icons
 const Icons = {
@@ -123,7 +124,7 @@ const App: React.FC = () => {
     try {
       addLog('INFO', 'Processing Registration', 'Analyzing with Gemini...');
 
-      const detection = await geminiService.analyzeRegistrationImage(image);
+      const detection = await claudeService.analyzeRegistrationImage(image);
 
       if (detection.boundingBox) {
         setDetectedBox(detection.boundingBox);
@@ -181,7 +182,7 @@ const App: React.FC = () => {
       if (image) {
         try {
           const currentUsers = storageService.getUsers();
-          const result = await geminiService.recognizeUser(image, currentUsers);
+          const result = await claudeService.recognizeUser(image, currentUsers);
 
           if (result.boundingBox) {
             setDetectedBox(result.boundingBox);
@@ -476,7 +477,7 @@ const App: React.FC = () => {
                 <VoiceAssistant
                   onCaptureRequest={async () => cameraRef.current?.capture() || null}
                   onRecognizeRequest={async (image) => {
-                    const result = await geminiService.recognizeUser(image, users);
+                    const result = await claudeService.recognizeUser(image, users);
                     if (result.matchFound && result.userId) {
                       const user = storageService.getUserById(result.userId);
                       if (user) {
@@ -510,6 +511,31 @@ const App: React.FC = () => {
                         break;
                       case 'open_settings':
                         setShowSettings(true);
+                        break;
+                      case 'begin_detection':
+                        // Start continuous vision analysis
+                        addLog('INFO', 'Starting continuous detection...');
+                        visionPipeline.startContinuousAnalysis(
+                          async () => {
+                            if (cameraRef.current) {
+                              return cameraRef.current.captureFrame();
+                            }
+                            return null;
+                          },
+                          (result) => {
+                            addLog('INFO', 'Detection', result.description || 'analyzing...');
+                            if (result.peopleCount !== undefined) {
+                              addLog('INFO', 'People count', String(result.peopleCount));
+                            }
+                          },
+                          { describeScene: true, countPeople: true },
+                          5000 // Every 5 seconds
+                        );
+                        break;
+                      case 'stop_detection':
+                        // Stop continuous vision analysis
+                        visionPipeline.stopAnalysis();
+                        addLog('INFO', 'Continuous detection stopped.');
                         break;
                     }
                   }}

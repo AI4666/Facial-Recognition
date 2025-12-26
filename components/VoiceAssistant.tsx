@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { voiceService } from '../services/voiceService';
 import { ollamaService } from '../services/ollamaService';
+import { visionPipeline } from '../services/visionPipeline';
 
 interface VoiceAssistantProps {
     onCaptureRequest?: () => Promise<string | null>;  // Returns base64 image
@@ -107,6 +108,36 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
                     await respond("Cancelled.");
                     break;
 
+                // ==========================================
+                // VISION COMMANDS (Moondream)
+                // ==========================================
+                case 'describe_scene':
+                    // "What do you see?" / "Describe"
+                    await handleDescribeScene();
+                    break;
+
+                case 'detect_object':
+                    // "Is there a [object]?" / "Do you see a [object]?"
+                    await handleDetectObject(transcript);
+                    break;
+
+                case 'count_people':
+                    // "How many people?"
+                    await handleCountPeople();
+                    break;
+
+                case 'begin_detection':
+                    // "Begin detection" / "Start detection"
+                    onCommand?.('begin_detection');
+                    await respond("Starting continuous detection.");
+                    break;
+
+                case 'stop_detection':
+                    // "Stop detection"
+                    onCommand?.('stop_detection');
+                    await respond("Detection stopped.");
+                    break;
+
                 case 'chat':
                 default:
                     // Free-form chat - send to Gemma 3
@@ -175,6 +206,74 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
             await respond(response);
         } catch (error) {
             await respond("I'm having trouble connecting to the AI. Please check if Ollama is running.");
+        }
+    };
+
+    // ==========================================
+    // VISION COMMAND HANDLERS
+    // ==========================================
+
+    // Handle "What do you see?" / "Describe"
+    const handleDescribeScene = async () => {
+        await respond("Let me look...");
+        try {
+            const image = onCaptureRequest ? await onCaptureRequest() : null;
+            if (!image) {
+                await respond("I couldn't access the camera.");
+                return;
+            }
+            const description = await visionPipeline.quickDescribe(image);
+            await respond(description);
+        } catch (error) {
+            await respond("I'm having trouble analyzing the scene. Please check if Ollama is running.");
+        }
+    };
+
+    // Handle "Is there a [object]?" / "Do you see a [object]?"
+    const handleDetectObject = async (transcript: string) => {
+        // Extract the object name from the transcript
+        const patterns = [
+            /is there a (.+?)\??$/i,
+            /do you see a (.+?)\??$/i,
+            /can you see a (.+?)\??$/i
+        ];
+
+        let objectName = 'object';
+        for (const pattern of patterns) {
+            const match = transcript.match(pattern);
+            if (match) {
+                objectName = match[1].trim();
+                break;
+            }
+        }
+
+        await respond(`Looking for a ${objectName}...`);
+        try {
+            const image = onCaptureRequest ? await onCaptureRequest() : null;
+            if (!image) {
+                await respond("I couldn't access the camera.");
+                return;
+            }
+            const result = await visionPipeline.quickObjectCheck(image, objectName);
+            await respond(result);
+        } catch (error) {
+            await respond(`I'm having trouble looking for the ${objectName}. Please check if Ollama is running.`);
+        }
+    };
+
+    // Handle "How many people?"
+    const handleCountPeople = async () => {
+        await respond("Counting...");
+        try {
+            const image = onCaptureRequest ? await onCaptureRequest() : null;
+            if (!image) {
+                await respond("I couldn't access the camera.");
+                return;
+            }
+            const result = await visionPipeline.quickPeopleCount(image);
+            await respond(result);
+        } catch (error) {
+            await respond("I'm having trouble counting people. Please check if Ollama is running.");
         }
     };
 
@@ -258,6 +357,13 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
                     <span>• "Start monitoring"</span>
                     <span>• "Stop"</span>
                     <span>• "Settings"</span>
+                </div>
+                <div className="font-medium text-purple-400 mt-3 mb-2">🔮 Vision Commands:</div>
+                <div className="grid grid-cols-2 gap-1">
+                    <span>• "What do you see?"</span>
+                    <span>• "Is there a [dog]?"</span>
+                    <span>• "How many people?"</span>
+                    <span>• "Begin detection"</span>
                 </div>
                 <div className="mt-2 text-slate-600">Or ask any question!</div>
             </div>

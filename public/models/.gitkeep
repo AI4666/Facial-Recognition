@@ -1,0 +1,3 @@
+# This file keeps the models directory in git while ignoring model files
+# Place your ONNX models here:
+# - yolov8n-face.onnx

@@ -197,6 +197,31 @@ export const voiceService = {
             command = 'confirm';
         } else if (lowerTranscript.includes('no') || lowerTranscript.includes('cancel')) {
             command = 'cancel';
+        }
+        // ==========================================
+        // VISION COMMANDS
+        // ==========================================
+        else if (lowerTranscript.includes('what do you see') ||
+            lowerTranscript.includes('describe') ||
+            lowerTranscript.includes('what is this') ||
+            lowerTranscript.includes('look at')) {
+            command = 'describe_scene';
+        } else if (lowerTranscript.includes('is there a') ||
+            lowerTranscript.includes('do you see a') ||
+            lowerTranscript.includes('can you see a')) {
+            command = 'detect_object';
+        } else if (lowerTranscript.includes('how many people') ||
+            lowerTranscript.includes('count people') ||
+            lowerTranscript.includes('how many persons')) {
+            command = 'count_people';
+        } else if (lowerTranscript.includes('begin detection') ||
+            lowerTranscript.includes('start detection') ||
+            lowerTranscript.includes('begin scanning')) {
+            command = 'begin_detection';
+        } else if (lowerTranscript.includes('stop detection') ||
+            lowerTranscript.includes('end detection') ||
+            lowerTranscript.includes('stop scanning')) {
+            command = 'stop_detection';
         } else {
             command = 'chat'; // Default to chat message
         }
